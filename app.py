@@ -107,4 +107,5 @@ def webhook_handler():
 
 if __name__ == "__main__":
     port = os.environ.get("PORT", 8000)
-    app.run(host="0.0.0.0", port=port, debug=True)
+   if __name__ == "__main__":
+    app.run(port=8000) # 這行就是讓 GitHub 轉圈圈的元兇！
