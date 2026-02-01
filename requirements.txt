@@ -3,3 +3,5 @@ python-dotenv
 line-bot-sdk
 pandas
 yfinance
+transitions
+requests
