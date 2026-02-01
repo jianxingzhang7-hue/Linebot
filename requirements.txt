@@ -5,3 +5,4 @@ pandas
 yfinance
 transitions
 requests
+cairosvg
