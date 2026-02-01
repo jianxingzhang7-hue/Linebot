@@ -6,3 +6,4 @@ yfinance
 transitions
 requests
 cairosvg
+pyimgur
