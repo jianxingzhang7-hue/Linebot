@@ -17,4 +17,5 @@ jobs:
         env:
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+          IMGUR_KEY: ${{ secrets.IMGUR_KEY }}
         run: python app.py
