@@ -4,82 +4,81 @@ import pandas as pd
 from linebot import LineBotApi
 from linebot.models import TextSendMessage
 
-# 讀取你的 4 把鑰匙
+# 讀取 LINE 密鑰
 channel_access_token = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
 user_id = os.getenv('LINE_USER_ID')
 line_bot_api = LineBotApi(channel_access_token)
 
-def commuter_strategy(ticker):
+def check_market_status():
+    """ 檢查大盤是否在 5 週均線之上 (M：市場走勢) """
     try:
-        # 1. 下載資料：我們需要至少 40 天的資料來計算 MA24
-        # 加上 .TW 是為了台股格式
-        stock_id = f"{ticker}.TW" 
-        df = yf.download(stock_id, period="2mo", progress=False)
-        
-        if df.empty or len(df) < 25:
-            return None
+        market = yf.download("^TWII", period="6mo", interval="1wk", progress=False)
+        current_index = market['Close'].iloc[-1]
+        ma5_week = market['Close'].rolling(5).mean().iloc[-1]
+        return current_index > ma5_week, current_index, ma5_week
+    except:
+        return True, 0, 0
 
-        # 2. 計算 Excel 裡的均線 (MA5, MA10, MA24)
-        # 你的 Excel 截圖 用的是 24日線作為月線
+def ashin_strategy(ticker):
+    """ Ashin 流派核心選股邏輯 """
+    try:
+        stock_id = f"{ticker}.TW"
+        df = yf.download(stock_id, period="3mo", progress=False)
+        if df.empty or len(df) < 25: return None
+
+        # 1. 技術面：均線多頭排列 (Y欄)
         price = df['Close'].iloc[-1]
         ma5 = df['Close'].rolling(5).mean().iloc[-1]
         ma10 = df['Close'].rolling(10).mean().iloc[-1]
         ma24 = df['Close'].rolling(24).mean().iloc[-1]
+        is_aligned = (ma5 > ma10) and (ma10 > ma24)
 
-        # 3. 執行 Excel 裡的篩選邏輯
-        
-        # 條件 A (Y欄): 均線多頭排列 (MA5 > MA10 > MA24)
-        condition_alignment = (ma5 > ma10) and (ma10 > ma24)
-        
-        # 條件 B (X欄): 股價距離 MA24 < 15% (避免追高)
-        # 計算乖離率: (股價 - MA24) / MA24
-        bias_percentage = (price - ma24) / ma24
-        condition_bias = bias_percentage < 0.15 and bias_percentage > 0 # 確保是在均線之上
+        # 2. 乖離率控制 (X欄)：股價距 MA24 < 15%
+        bias_24 = (price - ma24) / ma24
+        is_safe_bias = 0 < bias_24 < 0.15
 
-        # 4. 判斷是否符合
-        if condition_alignment and condition_bias:
+        # 3. 流動性過濾：近 5 日平均成交金額 >= 1000 萬
+        # 成交金額 = 成交量 * 收盤價
+        df['Amount'] = df['Volume'] * df['Close']
+        avg_amount_5d = df['Amount'].tail(5).mean()
+        is_liquid = avg_amount_5d >= 10000000 
+
+        if is_aligned and is_safe_bias and is_liquid:
             return {
-                "symbol": ticker,
-                "price": price,
-                "ma5": ma5,
-                "ma10": ma10,
-                "ma24": ma24,
-                "bias": bias_percentage * 100
+                "symbol": ticker, "price": price, 
+                "bias": bias_24 * 100, "amount": avg_amount_5d / 10000
             }
-        else:
-            return None
-
-    except Exception as e:
-        print(f"Error checking {ticker}: {e}")
+        return None
+    except:
         return None
 
 def main():
-    # 這裡放入你想觀察的股票清單 (你可以之後把 Excel 的代號整排貼過來)
-    # 先幫你放幾支熱門股測試邏輯
-    watchlist = ['2330', '2317', '2454', '2303', '2603', '2881', '3231', '2382', '2376', '2383']
+    # 擴大掃描範圍 (0050 + 0051 部分成分股)
+    watchlist = [
+        '2330', '2317', '2454', '2308', '2303', '2881', '3711', '2882', '2886', '2891',
+        '3231', '2382', '2603', '2609', '2615', '3017', '1513', '1519', '1503', '1514',
+        '2376', '2383', '3037', '3035', '3443', '6235', '1605', '1608', '1609'
+    ]
     
-    results = []
-    print("🚀 啟動通勤族 Excel 篩選邏輯...")
-
-    for ticker in watchlist:
-        res = commuter_strategy(ticker)
+    # A. 檢查大盤狀態
+    market_ok, m_price, m_ma5w = check_market_status()
+    market_msg = "✅ 大盤處於安全區" if market_ok else "⚠️ 大盤跌破5週線，請縮小部位"
+    
+    # B. 執行選股
+    picked = []
+    for t in watchlist:
+        res = ashin_strategy(t)
         if res:
-            # 格式化輸出，模仿你的 Excel 欄位
-            msg = (f"🔥 {res['symbol']} 符合條件！\n"
-                   f"股價: {res['price']:.2f}\n"
-                   f"✅ MA5({res['ma5']:.1f}) > MA10 > MA24\n"
-                   f"✅ 距MA24乖離: {res['bias']:.2f}% (<15%)")
-            results.append(msg)
-            print(f"抓到股票: {res['symbol']}")
+            picked.append(f"🔥 {res['symbol']}\n現價: {res['price']:.1f}\n乖離: {res['bias']:.1f}%\n均量: {res['amount']:.0f}萬")
 
-    # 發送結果
-    if results:
-        final_msg = "📊 【通勤族策略】今日精選：\n\n" + "\n----------------\n".join(results)
+    # C. 組合與發送訊息
+    final_report = f"📊 【Ashin流派選股報告】\n{market_msg}\n{'-'*15}\n"
+    if picked:
+        final_report += "\n\n".join(picked)
     else:
-        final_msg = "📉 今日掃描清單中，無股票同時符合「多頭排列」且「乖離<15%」。"
+        final_report += "今日暫無符合「多頭+低乖離+量足」之標的。"
 
-    line_bot_api.push_message(user_id, TextSendMessage(text=final_msg))
-    print("✅ 報告已發送")
+    line_bot_api.push_message(user_id, TextSendMessage(text=final_report))
 
 if __name__ == "__main__":
     main()
